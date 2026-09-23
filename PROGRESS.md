@@ -104,3 +104,9 @@ Added a dedicated **Node Mesh** navigation tab beside Cloud CLI. It presents thr
 Each lane has a recipient selector, message composer, send action, node status badge, and recent traffic list. Messages use the authenticated OMEGA hub’s existing `inbox_post` and `inbox_read` MCP tools rather than mock or browser-only state. The mesh refreshes automatically every seven seconds and supports Ctrl/Cmd + Enter to send. Default routing addresses are `vps`, `termux`, and `cloud`; if the hub advertises different peer IDs, those addresses must be adjusted in the bridge contract.
 
 Validation after the Node Mesh change: TypeScript check passed, **9 Vitest tests passed**, and the production build passed. The only build notice remains the non-blocking Vite large-client-chunk warning.
+
+## Node Mesh publication correction — 2026-09-23 UTC
+
+The first Node Mesh checkpoint exposed a publication regression: the live domain returned HTTP 404 even though the local development preview loaded. The cause was an incorrect production static path in `server/_core/vite.ts`; the bundled server resolves production assets from `dist/public` relative to the bundled `dist/index.js`, while the source/dev server uses the source-relative path.
+
+Restored the correct environment-specific path: development uses the source-relative `dist/public` path, and production uses the bundled server’s `public` path. Verified the built production server locally on port 3100: `/` returned HTTP 200 and the OMEGA app marker was present. TypeScript check passed, **9 Vitest tests passed**, and the production build passed. The live domain must be republished from this corrected checkpoint.
