@@ -126,3 +126,11 @@ Validation completed: TypeScript check passed, **9 Vitest tests passed**, produc
 Changed the pipeline from a blocking five-stage mutation to a live job workflow. `pipeline.start` creates an in-memory job and returns immediately; `pipeline.status` exposes the current stage array, final answer, tool-call count, and errors. The UI polls status every 700ms while the job is running, so each stage visibly transitions through pending, running, and done/error while the models execute. The original `pipeline.run` mutation remains available for non-streaming callers.
 
 The streaming implementation passed validation in both the GitHub working tree and the active WebDev project: TypeScript check passed, **9 Vitest tests passed**, and the production build passed.
+
+## Model Chat + browser voice phase 1 — 2026-09-23 UTC
+
+Integrated the supplied `htt3-model-chat-voice.zip` package. The package SHA-256 matched the supplied value `aee17a472637c34c5674c9fe104ab679f46c82c03134c996faa5277ae3665676`.
+
+Model Chat now supports browser-native push-to-talk speech recognition, interim transcript display, spoken assistant bubbles, and a persistent local-storage auto-speak toggle. Voice support is feature-detected: mic controls require browser SpeechRecognition support, while speaker controls require speech synthesis. The UI includes the Chrome/Edge privacy notice and voice cannot bypass the existing Termux command-approval gate. No server routes, secrets, schema changes, or new permissions were added.
+
+Validation completed in both the GitHub working tree and active WebDev project: TypeScript check passed, **9 Vitest tests passed**, and production builds passed. The only build notice remains the non-blocking Vite large-client-chunk warning.
