@@ -19,6 +19,8 @@ import {
 } from "./useVoiceChat";
 import {
   Check,
+  ChevronLeft,
+  ChevronRight,
   Loader2,
   MessageCircle,
   Mic,
@@ -161,6 +163,13 @@ export function ModelChatView({
   } | null>(null);
   const [listening, setListening] = useState(false);
   const [interim, setInterim] = useState("");
+  const [contactsCollapsed, setContactsCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("omega-model-chat-contacts-collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
   const [autoSpeak, setAutoSpeak] = useState(() => {
     try {
       return localStorage.getItem(AUTO_SPEAK_KEY) === "1";
@@ -475,12 +484,33 @@ export function ModelChatView({
         </p>
       )}
 
-      <div className="mc-shell">
+      <div className={`mc-shell ${contactsCollapsed ? "contacts-collapsed" : ""}`}>
         <aside className="mc-contacts panel">
           <div className="mc-contacts-head">
             <div className="mc-contacts-title">
               <MessageCircle size={16} />
               <span>MODELS</span>
+              <button
+                type="button"
+                className="mc-contacts-collapse"
+                title={contactsCollapsed ? "Expand contacts" : "Collapse contacts"}
+                onClick={() => {
+                  setContactsCollapsed((prev) => {
+                    const next = !prev;
+                    try {
+                      localStorage.setItem(
+                        "omega-model-chat-contacts-collapsed",
+                        next ? "1" : "0",
+                      );
+                    } catch {
+                      /* ignore */
+                    }
+                    return next;
+                  });
+                }}
+              >
+                {contactsCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+              </button>
             </div>
             <div className="mc-search">
               <Search size={14} />

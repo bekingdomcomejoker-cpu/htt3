@@ -4,11 +4,13 @@ import { ChatMessageContent } from "@/components/ChatMessageContent";
 import PipelineView from "@/components/PipelineView";
 import { ModelChatView } from "@/components/ModelChatView";
 import {
-  Activity,
-  BatteryCharging,
-  BookmarkPlus,
-  ChevronDown,
-  CircleDot,
+	  Activity,
+	  BatteryCharging,
+	  BookmarkPlus,
+	  ChevronDown,
+	  ChevronLeft,
+	  ChevronRight,
+	  CircleDot,
   Clipboard,
   Cloud,
   Command,
@@ -168,8 +170,15 @@ const nav = [
 ];
 
 function AppShell({ client, initialTools, initialHealth, onLock }: { client: McpClient; initialTools: Tool[]; initialHealth: Health; onLock: () => void }) {
-  const [active, setActive] = useState("overview");
-  const [tools, setTools] = useState(initialTools);
+	  const [active, setActive] = useState("overview");
+	  const [navCollapsed, setNavCollapsed] = useState(() => {
+	    try {
+	      return localStorage.getItem("omega-nav-collapsed") === "1";
+	    } catch {
+	      return false;
+	    }
+	  });
+	  const [tools, setTools] = useState(initialTools);
   const [status, setStatus] = useState(initialHealth);
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [battery, setBattery] = useState<any>(null);
@@ -209,9 +218,9 @@ function AppShell({ client, initialTools, initialHealth, onLock }: { client: Mcp
   }, [client.url, client.key]);
   const hubLive = status.ok && status.peers?.vps === "live";
   const termuxPeer = snap?.peers?.find((peer) => peer.id === "termux");
-  return <div className="operator-app">
-    <aside className={`operator-sidebar ${mobileNav ? "open" : ""}`}>
-      <div className="operator-brand"><div className="small-mark">Ω</div><div><div className="brand-title">OMEGA <span>OPERATOR</span></div><div className="brand-caption">MESH CONTROL PLANE</div></div><IconButton label="Close navigation" onClick={() => setMobileNav(false)}><X size={17} /></IconButton></div>
+	  return <div className={`operator-app ${navCollapsed ? "nav-collapsed" : ""}`}>
+	    <aside className={`operator-sidebar ${mobileNav ? "open" : ""}`}>
+	      <div className="operator-brand"><div className="small-mark">Ω</div><div><div className="brand-title">OMEGA <span>OPERATOR</span></div><div className="brand-caption">MESH CONTROL PLANE</div></div><button type="button" className="nav-collapse-btn" title={navCollapsed ? "Expand navigation" : "Collapse navigation"} onClick={() => { setNavCollapsed((prev) => { const next = !prev; try { localStorage.setItem("omega-nav-collapsed", next ? "1" : "0"); } catch { /* ignore */ } return next; }); }}>{navCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}</button><IconButton label="Close navigation" onClick={() => setMobileNav(false)}><X size={17} /></IconButton></div>
       <div className="connection-card"><div className="connection-top"><span className="connection-label">BRIDGE STATUS</span><Badge tone={hubLive ? "live" : "warn"}>{hubLive ? "LIVE" : "OFFLINE"}</Badge></div><div className="connection-url"><span className="status-dot live" />{new URL(normaliseUrl(client.url)).hostname}</div><div className="connection-detail">MCP / port {status.port || "—"}</div></div>
       <div className="nav-caption">CONTROL SURFACES</div>
       <nav>{nav.map(({ id, label, icon: Icon }) => <button key={id} type="button" className={`side-nav-item ${active === id ? "active" : ""}`} onClick={() => { setActive(id); setMobileNav(false); }}><Icon size={16} /><span>{label}</span>{id === "inbox" && snap?.inbox?.length ? <b className="nav-count">{snap.inbox.length}</b> : null}</button>)}</nav>

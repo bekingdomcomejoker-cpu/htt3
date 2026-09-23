@@ -134,3 +134,11 @@ Integrated the supplied `htt3-model-chat-voice.zip` package. The package SHA-256
 Model Chat now supports browser-native push-to-talk speech recognition, interim transcript display, spoken assistant bubbles, and a persistent local-storage auto-speak toggle. Voice support is feature-detected: mic controls require browser SpeechRecognition support, while speaker controls require speech synthesis. The UI includes the Chrome/Edge privacy notice and voice cannot bypass the existing Termux command-approval gate. No server routes, secrets, schema changes, or new permissions were added.
 
 Validation completed in both the GitHub working tree and active WebDev project: TypeScript check passed, **9 Vitest tests passed**, and production builds passed. The only build notice remains the non-blocking Vite large-client-chunk warning.
+
+## Model Chat layout and collapsible navigation — 2026-09-23 UTC
+
+Integrated the replacement `htt3-model-chat-voice.zip` package. The package SHA-256 matched the supplied value `4909488ecb873a0b6adca5c594b47150744d0b79f65f0d7907e166b6c566cd72`.
+
+Model Chat now keeps a narrow contacts column on the left and the conversation thread on the right on desktop. The contacts list can collapse to an avatar rail, with its preference saved in local storage. The main operator navigation can also collapse to an icon-only rail, with a persisted local preference. Existing voice controls, chat APIs, Termux approval behavior, and security boundaries remain unchanged. A compatibility override preserves Node 3’s fixed-sidebar layout while applying the supplied collapse behavior.
+
+Validation completed in both the GitHub working tree and active WebDev project: TypeScript check passed, **9 Vitest tests passed**, and production builds passed. The only build notice remains the non-blocking Vite large-client-chunk warning.
