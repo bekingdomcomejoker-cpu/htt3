@@ -110,3 +110,19 @@ Validation after the Node Mesh change: TypeScript check passed, **9 Vitest tests
 The first Node Mesh checkpoint exposed a publication regression: the live domain returned HTTP 404 even though the local development preview loaded. The cause was an incorrect production static path in `server/_core/vite.ts`; the bundled server resolves production assets from `dist/public` relative to the bundled `dist/index.js`, while the source/dev server uses the source-relative path.
 
 Restored the correct environment-specific path: development uses the source-relative `dist/public` path, and production uses the bundled server’s `public` path. Verified the built production server locally on port 3100: `/` returned HTTP 200 and the OMEGA app marker was present. TypeScript check passed, **9 Vitest tests passed**, and the production build passed. The live domain must be republished from this corrected checkpoint.
+
+## HTT3 Pipeline tab — 2026-09-23 UTC
+
+Integrated the verified `htt3-pipeline-tab.zip` package from Drive. The package SHA-256 matched the supplied value `862f0209c9ed0bab46e2651f57b43a5cbb243f2f6103577d6bc785e202753f7f`.
+
+Added `server/pipeline.ts` for the five-stage Research → Implement → Critique → Revise → Present orchestration, `server/pipelineRouter.ts` for model defaults/catalog and the pipeline mutation, and `client/src/components/PipelineView.tsx` for model selectors, prompt submission, stage trace, tool-call counts, expandable outputs, and final-answer copy. Added the **HTT3 Pipeline** navigation entry beside Cloud CLI and included theme-matched responsive styles in `client/src/index.css`.
+
+Security behavior is preserved: Forge requests remain server-side through the existing runtime environment, the researcher can use the configured bridge only for discovered tools, and command tools are blocked inside the pipeline research stage. The pipeline does not auto-write files, approve commands, deploy, or alter secrets.
+
+Validation completed: TypeScript check passed, **9 Vitest tests passed**, production build passed, and an isolated htt3 dev-server smoke test returned the OMEGA root page successfully. The build retains the existing non-blocking large-client-chunk warning.
+
+## Live pipeline streaming — 2026-09-23 UTC
+
+Changed the pipeline from a blocking five-stage mutation to a live job workflow. `pipeline.start` creates an in-memory job and returns immediately; `pipeline.status` exposes the current stage array, final answer, tool-call count, and errors. The UI polls status every 700ms while the job is running, so each stage visibly transitions through pending, running, and done/error while the models execute. The original `pipeline.run` mutation remains available for non-streaming callers.
+
+The streaming implementation passed validation in both the GitHub working tree and the active WebDev project: TypeScript check passed, **9 Vitest tests passed**, and the production build passed.

@@ -6,6 +6,7 @@ import { publicProcedure, router } from "./_core/trpc";
 import { addChatMessage, createConversation, getConversation, listChatMessages, listConversations, updateConversationModel } from "./db";
 import { completeOmegaAssistant, MODEL_OPTIONS, type ChatModel } from "./assistant";
 import { callAssistantTool, discoverAssistantTools, isCommandTool, type McpBridgeConfig } from "./mcp";
+import { pipelineRouter } from "./pipelineRouter";
 const clientIdSchema = z.string().min(16).max(128);
 const modelSchema = z.enum(MODEL_OPTIONS.map((option) => option.id) as [ChatModel, ...ChatModel[]]);
 const bridgeConfigSchema = z.object({ url: z.string().url().max(500), key: z.string().min(8).max(512) });
@@ -13,6 +14,7 @@ const bridgeSchema = bridgeConfigSchema.optional();
 
 export const appRouter = router({
   system: systemRouter,
+  pipeline: pipelineRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
