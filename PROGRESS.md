@@ -142,3 +142,9 @@ Integrated the replacement `htt3-model-chat-voice.zip` package. The package SHA-
 Model Chat now keeps a narrow contacts column on the left and the conversation thread on the right on desktop. The contacts list can collapse to an avatar rail, with its preference saved in local storage. The main operator navigation can also collapse to an icon-only rail, with a persisted local preference. Existing voice controls, chat APIs, Termux approval behavior, and security boundaries remain unchanged. A compatibility override preserves Node 3’s fixed-sidebar layout while applying the supplied collapse behavior.
 
 Validation completed in both the GitHub working tree and active WebDev project: TypeScript check passed, **9 Vitest tests passed**, and production builds passed. The only build notice remains the non-blocking Vite large-client-chunk warning.
+
+## Lorna online-agent adapter and Cloud CLI relay — 2026-09-24 UTC
+
+Integrated the supplied `lorna3-onlineagent.zip` package. The package SHA-256 matched `5e1db5624c8ef7a598116038b5a253001d12a538c3c17171d60248976353d564`. The website Cloud CLI now includes a LORNA ONLINE AGENT panel that queues `@onlineagent <prompt>` messages to the Termux inbox and provides an explicit `lorna2 --node agent --quiet -p "/node agent"` probe action through the existing authenticated Termux tool. The adapter source and installation instructions are included under `integrations/lorna3-onlineagent/`.
+
+The Forge API key remains strictly Termux-side; the public website only relays prompts and never stores or receives the online-agent key. Added shared prompt formatting and regression tests for routing, empty-prompt rejection, and the Lorna probe command. Termux installation still requires the connected phone workspace and its local environment variables.
