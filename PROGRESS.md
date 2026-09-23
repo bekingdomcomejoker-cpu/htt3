@@ -95,3 +95,12 @@ Node 3 is maintained in the private repository `bekingdomcomejoker-cpu/htt3`. Th
 ## Security note
 
 No Forge key, environment file, or credential material is committed. The GitHub repository is private.
+
+
+## Node Mesh tab — 2026-09-23 UTC
+
+Added a dedicated **Node Mesh** navigation tab beside Cloud CLI. It presents three responsive side-by-side lanes: `NODE 1 / Omega VPS`, `NODE 2 / Termux device`, and `NODE 3 / Cloud CLI`.
+
+Each lane has a recipient selector, message composer, send action, node status badge, and recent traffic list. Messages use the authenticated OMEGA hub’s existing `inbox_post` and `inbox_read` MCP tools rather than mock or browser-only state. The mesh refreshes automatically every seven seconds and supports Ctrl/Cmd + Enter to send. Default routing addresses are `vps`, `termux`, and `cloud`; if the hub advertises different peer IDs, those addresses must be adjusted in the bridge contract.
+
+Validation after the Node Mesh change: TypeScript check passed, **9 Vitest tests passed**, and the production build passed. The only build notice remains the non-blocking Vite large-client-chunk warning.

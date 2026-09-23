@@ -38,7 +38,7 @@ const DEFAULT_URL = "https://omega-hub-canonical.onrender.com";
 
 type Tool = { name: string; description?: string; inputSchema?: Record<string, unknown> };
 type Health = { ok: boolean; service?: string; transport?: string; port?: number; peers?: { vps?: string; termux?: string } };
-type Snapshot = { peers?: Array<{ id: string; name: string; role: string; via: string; status: string; lastSeen: string | null; tools: string[]; latencyMs: number | null }>; inbox?: Array<{ id: string; to: string; body: string; at: string }>; termuxLastError?: string | null; reverseConnect?: { url?: string | null } };
+type Snapshot = { peers?: Array<{ id: string; name: string; role: string; via: string; status: string; lastSeen: string | null; tools: string[]; latencyMs: number | null }>; inbox?: Array<{ id: string; to: string; from?: string; body: string; at: string }>; termuxLastError?: string | null; reverseConnect?: { url?: string | null } };
 
 type McpClient = { url: string; key: string; session: string | null };
 
@@ -153,6 +153,7 @@ const nav = [
   { id: "overview", label: "Overview", icon: Activity },
   { id: "terminal", label: "Terminal", icon: TerminalSquare },
   { id: "gateway", label: "Cloud CLI", icon: Command },
+  { id: "mesh", label: "Node Mesh", icon: Network },
   { id: "files", label: "Files", icon: FolderOpen },
   { id: "network", label: "Network", icon: Network },
   { id: "router", label: "MikroTik", icon: RouterIcon },
@@ -213,7 +214,7 @@ function AppShell({ client, initialTools, initialHealth, onLock }: { client: Mcp
     {mobileNav && <div className="mobile-overlay" onClick={() => setMobileNav(false)} />}
     <main className="operator-main">
       <header className="operator-header"><button className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={20} /></button><div className="header-title"><span>OMEGA /</span><strong>{nav.find((item) => item.id === active)?.label}</strong></div><div className="header-actions"><span className="realtime-status"><StatusDot live={realtime} />{realtime ? "LIVE SYNC" : "POLLING"}</span><span className="header-clock">{new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span><IconButton label="Refresh mesh" onClick={() => void refresh()}>{refreshing ? <Loader2 size={17} className="spin" /> : <RefreshCw size={17} />}</IconButton><div className="avatar">OP</div></div></header>
-      <div className="operator-content">{active === "overview" && <Overview status={status} snap={snap} tools={tools} battery={battery} onNavigate={setActive} />} {active === "terminal" && <TerminalView client={client} tools={tools} notify={notify} />} {active === "gateway" && <GatewayView client={client} notify={notify} />} {active === "files" && <FilesView client={client} notify={notify} />} {active === "network" && <NetworkView client={client} battery={battery} notify={notify} />} {active === "router" && <MikrotikView client={client} notify={notify} />} {active === "tools" && <ToolsView client={client} tools={tools} notify={notify} />} {active === "inbox" && <InboxView client={client} snap={snap} notify={notify} />}</div>
+      <div className="operator-content">{active === "overview" && <Overview status={status} snap={snap} tools={tools} battery={battery} onNavigate={setActive} />} {active === "terminal" && <TerminalView client={client} tools={tools} notify={notify} />} {active === "gateway" && <GatewayView client={client} notify={notify} />} {active === "mesh" && <NodeMeshView client={client} snap={snap} notify={notify} />} {active === "files" && <FilesView client={client} notify={notify} />} {active === "network" && <NetworkView client={client} battery={battery} notify={notify} />} {active === "router" && <MikrotikView client={client} notify={notify} />} {active === "tools" && <ToolsView client={client} tools={tools} notify={notify} />} {active === "inbox" && <InboxView client={client} snap={snap} notify={notify} />}</div>
     </main>
     <div className="toast-stack">{toasts.map((toast, index) => <div className="toast" key={`${toast}-${index}`}><StatusDot live={true} />{toast}</div>)}</div>
   </div>;
@@ -445,6 +446,43 @@ function GatewayView({ client, notify }: { client: McpClient; notify: (text: str
 }
 
 function InboxView({ client, snap, notify }: { client: McpClient; snap: Snapshot | null; notify: (text: string) => void }) { const [messages, setMessages] = useState(snap?.inbox || []); const [body, setBody] = useState(""); const [busy, setBusy] = useState(false); async function reload() { try { const text = await callTool(client, "inbox_read", { for: "*" }); const parsed = jsonText(text); if (Array.isArray(parsed)) setMessages(parsed); } catch (error) { notify(error instanceof Error ? error.message : "Inbox read failed"); } } async function send() { if (!body.trim()) return; setBusy(true); try { await callTool(client, "inbox_post", { to: "termux", body: body.trim() }); setBody(""); await reload(); notify("Message queued for Termux"); } catch (error) { notify(error instanceof Error ? error.message : "Message failed"); } finally { setBusy(false); } } return <div className="view"><SectionHead eyebrow="Peer messaging / 006" title="Inbox relay." copy="Leave messages on the hub for the reverse-connected node, even when it is briefly offline." action={<button className="outline-button" onClick={() => void reload()}><RefreshCw size={14} /> Refresh</button>} /><div className="inbox-grid"><div className="panel composer"><div className="panel-title"><span>POST TO TERMUX</span><Send size={15} /></div><textarea value={body} onChange={(event) => setBody(event.target.value)} placeholder="Write a message for the connected phone..." /><button className="primary-small" onClick={() => void send()} disabled={busy || !body.trim()}>{busy ? <Loader2 size={14} className="spin" /> : <Send size={14} />} Queue message</button></div><div className="panel message-list"><div className="panel-title"><span>RECENT MESSAGES</span><span className="message-count">{messages.length}</span></div>{messages.length ? messages.map((message) => <div className="message" key={message.id}><div className="message-meta"><span>{message.to}</span><time>{new Date(message.at).toLocaleString()}</time></div><p>{message.body}</p></div>) : <div className="empty-runner"><Send size={20} /><p>No messages waiting on the hub.</p></div>}</div></div></div>; }
+
+function NodeMeshView({ client, snap, notify }: { client: McpClient; snap: Snapshot | null; notify: (text: string) => void }) {
+  type MeshMessage = { id?: string | number; to: string; from?: string; body: string; at?: string };
+  const nodes = [
+    { id: "vps", label: "NODE 1", name: "Omega VPS", role: "hub / server" },
+    { id: "termux", label: "NODE 2", name: "Termux device", role: "phone / reverse" },
+    { id: "cloud", label: "NODE 3", name: "Cloud CLI", role: "operator / browser" },
+  ];
+  const [messages, setMessages] = useState<MeshMessage[]>((snap?.inbox || []) as MeshMessage[]);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [targets, setTargets] = useState<Record<string, string>>({ vps: "termux", termux: "vps", cloud: "termux" });
+  const [busy, setBusy] = useState(false);
+
+  async function reload() {
+    try {
+      const parsed = jsonText(await callTool(client, "inbox_read", { for: "*" }));
+      if (Array.isArray(parsed)) setMessages(parsed as MeshMessage[]);
+    } catch (error) { notify(error instanceof Error ? error.message : "Mesh inbox read failed"); }
+  }
+  async function send(from: string) {
+    const body = drafts[from]?.trim(); const to = targets[from];
+    if (!body || !to) return;
+    setBusy(true);
+    try {
+      await callTool(client, "inbox_post", { to, body: `[${from}] ${body}` });
+      setDrafts((current) => ({ ...current, [from]: "" }));
+      await reload();
+      notify(`${from.toUpperCase()} → ${to.toUpperCase()} queued`);
+    } catch (error) { notify(error instanceof Error ? error.message : "Mesh message failed"); }
+    finally { setBusy(false); }
+  }
+  useEffect(() => { if (snap?.inbox) setMessages(snap.inbox as MeshMessage[]); }, [snap]);
+  useEffect(() => { const timer = window.setInterval(() => { void reload(); }, 7000); return () => window.clearInterval(timer); }, [client.url, client.key]);
+  const statusFor = (id: string) => snap?.peers?.find((peer) => peer.id === id)?.status || (id === "vps" ? "live" : "waiting");
+  const messagesFor = (id: string) => messages.filter((message) => message.to === id || message.from === id);
+  return <div className="view"><SectionHead eyebrow="Inter-node messaging / 009" title="Node mesh." copy="Three Cloud CLI lanes on one shared inbox. Send between nodes and watch the traffic return through the authenticated OMEGA hub." action={<button className="outline-button" onClick={() => void reload()} disabled={busy}>{busy ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />} Refresh mesh</button>} /><div className="mesh-banner"><div><span className="strip-label">SHARED TRANSPORT</span><strong>OMEGA INBOX / STREAMABLE HTTP</strong><small>Messages are routed by node address; hub credentials stay in this browser session.</small></div><Badge tone={messages.length ? "live" : "neutral"}>{messages.length} MESSAGES</Badge></div><div className="node-mesh-grid">{nodes.map((node) => { const live = statusFor(node.id) === "live"; const nodeMessages = messagesFor(node.id).slice(-8); const recipients = nodes.filter((candidate) => candidate.id !== node.id); return <section className="panel node-card" key={node.id}><div className="node-card-head"><div><span className="node-label">{node.label}</span><h3>{node.name}</h3><small>{node.role}</small></div><Badge tone={live ? "live" : "warn"}>{live ? "LIVE" : "WAITING"}</Badge></div><div className="node-message-list">{nodeMessages.length ? nodeMessages.map((message, index) => <div className="node-message" key={`${message.id || message.at || "message"}-${index}`}><div><b>{message.from || "HUB"}</b><span>{message.to}</span></div><p>{message.body}</p><time>{message.at ? new Date(message.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "queued"}</time></div>) : <div className="node-empty"><Network size={17} /><span>No traffic for this node yet.</span></div>}</div><div className="node-composer"><select value={targets[node.id]} onChange={(event) => setTargets((current) => ({ ...current, [node.id]: event.target.value }))}>{recipients.map((recipient) => <option key={recipient.id} value={recipient.id}>Send to {recipient.label}</option>)}</select><textarea value={drafts[node.id] || ""} onChange={(event) => setDrafts((current) => ({ ...current, [node.id]: event.target.value }))} placeholder={`Message from ${node.label.toLowerCase()}...`} onKeyDown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void send(node.id); } }} /><button className="primary-small" onClick={() => void send(node.id)} disabled={busy || !drafts[node.id]?.trim()}><Send size={14} /> Send from {node.label}</button></div></section>; })}</div><div className="notice"><Network size={16} /><span><strong>Routing note:</strong> Node addresses default to <code>vps</code>, <code>termux</code>, and <code>cloud</code>. If the hub advertises different peer IDs, update the target addresses in the bridge contract before using those lanes.</span></div></div>;
+}
 
 export default function Home() {
   const [client, setClient] = useState<McpClient | null>(null);
