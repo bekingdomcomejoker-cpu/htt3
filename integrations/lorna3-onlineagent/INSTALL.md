@@ -61,6 +61,8 @@ export ONLINE_AGENT_API_KEY="YOUR_FORGE_OR_MANUS_KEY"
 set -a; source ~/.online_agent_env; set +a
 ```
 
+The `~/bin/lorna3` launcher must source this file automatically before starting the TUI. Add `[ -f "$HOME/.online_agent_env" ] && . "$HOME/.online_agent_env"` immediately after `set -a`; otherwise manually sourced tests may work while a normal `lorna3` session returns HTTP 403.
+
 Alternate env names also accepted: `FORGE_BASE_URL`, `FORGE_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_API_KEY`.
 
 4. Smoke test:
@@ -75,7 +77,9 @@ print(a.ask('Reply with exactly: onlineagent-ok').text)
 "
 ```
 
-5. From TUI / dispatcher:
+5. Add the TUI dropdown and route. In `integrations/lorna3_tui.py`, add `@onlineagent` and `@oa` to `AT_ROUTES`. The existing `LornaCompleter` uses that registry for the Tab-completion dropdown. In `run_router`, dispatch both aliases through `router.dispatch` with the `omega-termux-lorna/lorna3` root on `sys.path`; the complete verified snippet is recorded in [`LORNA3_TUI_ROUTE_PATCH.md`](./LORNA3_TUI_ROUTE_PATCH.md).
+
+6. From TUI / dispatcher:
 
 ```text
 @onlineagent Reply with exactly: onlineagent-ok
@@ -111,3 +115,42 @@ export ONLINE_AGENT_MODEL=gpt-5.5          # or another Forge id
 | `lorna3/adapters/online_agent.py` | Adapter |
 | `patches/dispatch_ROUTES_snippet.py` | Copy-paste routes |
 | `INSTALL.md` | This guide |
+
+## Local MCP tool loop (LORNA 2 and LORNA 3)
+
+The online-agent package includes `mcp_client.py` and a bounded tool loop in `online_agent.py`. On Termux, install both files into the LORNA 3 package so the Forge adapter can initialize the authenticated local bridge, list the local tool catalog, execute at most four tool rounds, and return the final Forge response. The adapter falls back to ordinary Forge chat if the local bridge is temporarily unavailable; it never exposes the MCP key to Forge or the website.
+
+The LORNA 2 `/node onlineagent` route forwards through the existing `lorna3_route` bridge handler, so no LORNA 2 source change is required. This preserves the existing `/node agent` implementation and its MCP behavior unchanged.
+
+Required phone-local configuration remains:
+
+```bash
+set -a; . "$HOME/.online_agent_env"; set +a
+export LORNA_MCP_API_KEY="$(cat "$HOME/.config/omega/mcp.token")"
+cp "$HOME/.config/omega/mcp.token" "$HOME/.omega_mcp_token"
+```
+
+The read-only verification commands are:
+
+```bash
+printf '/node onlineagent\nYou MUST call the read-only MCP tool battery_status now with an empty JSON object. After it returns, report the exact result.\n/quit\n' | lorna2
+printf '@oa You MUST call the read-only MCP tool battery_status now with an empty JSON object. After it returns, report the exact result.\n/quit\n' | lorna3
+```
+
+Both routes must return a live JSON battery record from the connected phone. Do not commit `.online_agent_env`, MCP token files, or Forge credentials.
+
+## Shared LORNA memory
+
+The online-agent route now uses the same LORNA facts backend as the local agent: `~/.lorna_v2/facts.json`, implemented by `Lorna/agents/lorna_memory.py`. The supervised `omega-mcp` bridge exposes three phone-local tools: `lorna_remember`, `lorna_memory_context`, and `lorna_forget`. The Forge adapter is instructed to call these tools for explicit remember, recall, and forget requests; follow-up device requests can then use the recalled preference while still calling the relevant device tool.
+
+After updating `omega_mcp_bridge.py`, restart the supervised service and verify the persisted flow:
+
+```bash
+sv restart omega-mcp
+printf '/node onlineagent\nRemember exactly this preference: when I say turn it off after turning on the flashlight, turn the flashlight off.\nWhat do you remember about turning it off after the flashlight is on?\n/quit\n' | lorna2
+grep -n flashlight "$HOME/.lorna_v2/facts.json"
+```
+
+## Device follow-ups
+
+The adapter keeps the last few user and assistant turns in the running LORNA 2/3 process, so a follow-up such as `turn it off` can resolve the immediately preceding flashlight action. Flashlight requests, including common misspellings such as `flashloght`, use the bridge’s bounded `flashlight_control` tool directly instead of routing through a potentially slow language-model path. The bridge invokes `termux-torch` with an eight-second command limit and returns a clear success or failure message.

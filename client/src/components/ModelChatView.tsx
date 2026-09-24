@@ -29,6 +29,7 @@ import {
   Search,
   Send,
   Sparkles,
+  Trash2,
   Volume2,
   VolumeX,
 } from "lucide-react";
@@ -55,6 +56,12 @@ type ChatMessage = {
   role: string;
   content: string;
   model?: string | null;
+  createdAt?: string | Date | null;
+};
+
+type ChatMemory = {
+  id: number;
+  content: string;
   createdAt?: string | Date | null;
 };
 
@@ -144,19 +151,31 @@ function Badge({
 }
 
 const AUTO_SPEAK_KEY = "omega-model-chat-auto-speak";
+const ROTATION_KEY = "omega-model-chat-rotation";
+const USAGE_KEY = "omega-model-chat-usage";
+type UsageTotals = { promptTokens: number; completionTokens: number; totalTokens: number; requests: number };
 
 export function ModelChatView({
   client,
   notify,
+  allowedModelIds,
+  heading = "Your models, as contacts.",
+  description = "WhatsApp-style threads per model. Optional mic input and spoken replies — browser-native, no extra keys.",
 }: {
   client: McpClient;
   notify: (text: string) => void;
+  allowedModelIds?: string[];
+  heading?: string;
+  description?: string;
 }) {
   const [clientId] = useState(getBrowserClientId);
   const [query, setQuery] = useState("");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
+  const [streamContent, setStreamContent] = useState("");
+  const [streamBusy, setStreamBusy] = useState(false);
+  const [memoryDraft, setMemoryDraft] = useState("");
   const [pendingCommand, setPendingCommand] = useState<{
     name: string;
     arguments: Record<string, unknown>;
@@ -177,6 +196,17 @@ export function ModelChatView({
       return false;
     }
   });
+  const [rotationEnabled, setRotationEnabled] = useState(() => {
+    try { return localStorage.getItem(ROTATION_KEY) === "1"; } catch { return false; }
+  });
+  const [rotationIndex, setRotationIndex] = useState(0);
+  const [usageTotals, setUsageTotals] = useState<UsageTotals>(() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(USAGE_KEY) || "null");
+      if (parsed && typeof parsed === "object") return { promptTokens: Number(parsed.promptTokens) || 0, completionTokens: Number(parsed.completionTokens) || 0, totalTokens: Number(parsed.totalTokens) || 0, requests: Number(parsed.requests) || 0 };
+    } catch { /* ignore */ }
+    return { promptTokens: 0, completionTokens: 0, totalTokens: 0, requests: 0 };
+  });
   const [voiceSupport] = useState(() => detectVoiceSupport());
   const threadEndRef = useRef<HTMLDivElement | null>(null);
   const creatingRef = useRef(false);
@@ -191,10 +221,13 @@ export function ModelChatView({
     { clientId, conversationId: conversationId || 0 },
     { enabled: conversationId !== null },
   );
+  const memoriesQuery = trpc.chat.memories.useQuery({ clientId });
+  const providerHealthQuery = trpc.chat.providerHealth.useQuery({ model: selectedModelId as never }, { enabled: selectedModelId === "local-qwen2.5-7b", refetchInterval: 30000 });
 
-  const models: ModelOption[] = modelsQuery.data ? Array.from(modelsQuery.data as readonly ModelOption[]) : [];
+  const models: ModelOption[] = modelsQuery.data ? Array.from(modelsQuery.data as readonly ModelOption[]).filter((model) => !allowedModelIds || allowedModelIds.includes(model.id)) : [];
   const conversations: Conversation[] = (conversationsQuery.data as Conversation[]) || [];
   const messages: ChatMessage[] = (messagesQuery.data as ChatMessage[]) || [];
+  const memories: ChatMemory[] = (memoriesQuery.data as ChatMemory[]) || [];
 
   const createConversation = trpc.chat.create.useMutation({
     onSuccess: async (conversation) => {
@@ -208,6 +241,18 @@ export function ModelChatView({
 
   const askConversation = trpc.chat.ask.useMutation({
     onSuccess: async (result) => {
+      if (result.usage) {
+        setUsageTotals((previous) => {
+          const next = {
+            promptTokens: previous.promptTokens + result.usage.promptTokens,
+            completionTokens: previous.completionTokens + result.usage.completionTokens,
+            totalTokens: previous.totalTokens + result.usage.totalTokens,
+            requests: previous.requests + result.usage.requests,
+          };
+          try { localStorage.setItem(USAGE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+          return next;
+        });
+      }
       if (result.pendingTool) {
         setPendingCommand(result.pendingTool as { name: string; arguments: Record<string, unknown> });
       } else {
@@ -235,6 +280,23 @@ export function ModelChatView({
       if (conversationId !== null) {
         await utils.chat.messages.invalidate({ clientId, conversationId });
       }
+    },
+    onError: (error) => notify(error.message),
+  });
+
+  const saveMemory = trpc.chat.saveMemory.useMutation({
+    onSuccess: async () => {
+      setMemoryDraft("");
+      await utils.chat.memories.invalidate({ clientId });
+      notify("Memory saved for future chats");
+    },
+    onError: (error) => notify(error.message),
+  });
+
+  const deleteMemory = trpc.chat.deleteMemory.useMutation({
+    onSuccess: async () => {
+      await utils.chat.memories.invalidate({ clientId });
+      notify("Memory removed");
     },
     onError: (error) => notify(error.message),
   });
@@ -269,8 +331,13 @@ export function ModelChatView({
   const selectedModel = models.find((m) => m.id === selectedModelId) || null;
   const busy =
     askConversation.isPending ||
+    streamBusy ||
     executeCommand.isPending ||
     createConversation.isPending;
+
+  useEffect(() => {
+    if (allowedModelIds?.length && models.length && !selectedModelId) void openContact(models[0].id);
+  }, [allowedModelIds, models, selectedModelId]);
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -415,13 +482,78 @@ export function ModelChatView({
       listenHandle.current?.stop();
       setListening(false);
     }
+    const modelForRequest = rotationEnabled && models.length > 0 ? models[rotationIndex % models.length].id : selectedModelId;
+    if (rotationEnabled && models.length > 0) setRotationIndex((index) => index + 1);
+    if (modelForRequest === "local-qwen2.5-7b") {
+      void streamLocalMessage(text);
+      return;
+    }
     askConversation.mutate({
       clientId,
       conversationId,
-      model: selectedModelId as never,
+      model: modelForRequest as never,
       prompt: text,
       bridge: { url: client.url, key: client.key },
     });
+  }
+
+  async function streamLocalMessage(text: string) {
+    setStreamBusy(true);
+    setStreamContent("");
+    setDraft("");
+    try {
+      const response = await fetch("/api/local-llm/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId, conversationId, prompt: text }) });
+      if (!response.ok || !response.body) throw new Error((await response.text().catch(() => "")) || `Local stream failed (${response.status})`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const event = JSON.parse(line.slice(6));
+          if (event.error) throw new Error(event.error);
+          if (event.token) setStreamContent((current) => current + event.token);
+          if (event.usage) {
+            const usage = event.usage;
+            setUsageTotals((previous) => {
+              const next = { promptTokens: previous.promptTokens + (usage.prompt_tokens || 0), completionTokens: previous.completionTokens + (usage.completion_tokens || 0), totalTokens: previous.totalTokens + (usage.total_tokens || 0), requests: previous.requests + 1 };
+              try { localStorage.setItem(USAGE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+              return next;
+            });
+          }
+        }
+      }
+      await utils.chat.messages.invalidate({ clientId, conversationId: conversationId! });
+      await utils.chat.conversations.invalidate({ clientId });
+      setStreamContent("");
+      notify("Local Qwen stream complete");
+    } catch (error) {
+      setStreamContent("");
+      notify(error instanceof Error ? error.message : "Local stream failed");
+    } finally {
+      setStreamBusy(false);
+    }
+  }
+
+  function toggleRotation() {
+    setRotationEnabled((previous) => {
+      const next = !previous;
+      try { localStorage.setItem(ROTATION_KEY, next ? "1" : "0"); } catch { /* ignore */ }
+      notify(next ? "Round-robin rotation enabled" : "Rotation disabled");
+      return next;
+    });
+  }
+
+  function submitMemory(event: React.FormEvent) {
+    event.preventDefault();
+    const content = memoryDraft.trim();
+    if (!content || saveMemory.isPending) return;
+    saveMemory.mutate({ clientId, content });
   }
 
   function approveCommand() {
@@ -451,8 +583,8 @@ export function ModelChatView({
     <div className="view model-chat-view">
       <SectionHead
         eyebrow="Model chat / voice"
-        title="Your models, as contacts."
-        copy="WhatsApp-style threads per model. Optional mic input and spoken replies — browser-native, no extra keys."
+        title={heading}
+        copy={description}
         action={
           <div className="mc-head-actions">
             {voiceSupport.synthesis && (
@@ -467,8 +599,13 @@ export function ModelChatView({
               </button>
             )}
             <Badge tone={selectedModel ? "live" : "neutral"}>
-              {selectedModel ? selectedModel.label : "PICK A MODEL"}
+              {rotationEnabled ? `ROTATING · ${models.length} MODELS` : selectedModel ? selectedModel.label : "PICK A MODEL"}
             </Badge>
+            <button type="button" className={`mc-toggle ${rotationEnabled ? "on" : ""}`} onClick={toggleRotation} title="Rotate each request through the model catalog">
+              {rotationEnabled ? "Rotate on" : "Rotate models"}
+            </button>
+            <span className="mc-usage" title="Browser-scoped Forge usage recorded from response usage fields">{usageTotals.totalTokens.toLocaleString()} tokens · {usageTotals.requests} requests</span>
+            {selectedModelId === "local-qwen2.5-7b" && <span className={`mc-provider-status ${providerHealthQuery.data?.ok ? "ok" : "down"}`} title={providerHealthQuery.data?.error || "Local provider health"}>{providerHealthQuery.isFetching ? "checking local…" : providerHealthQuery.data?.ok ? `local ${providerHealthQuery.data.latencyMs}ms` : "local offline"}</span>}
           </div>
         }
       />
@@ -520,6 +657,14 @@ export function ModelChatView({
                 placeholder="Search models"
                 spellCheck={false}
               />
+            </div>
+            <div className="mc-memory-box">
+              <div className="mc-memory-title"><Sparkles size={13} /> PERSISTENT MEMORY</div>
+              <form onSubmit={submitMemory} className="mc-memory-form">
+                <input value={memoryDraft} onChange={(event) => setMemoryDraft(event.target.value)} placeholder="Save a preference or fact…" maxLength={2000} />
+                <button type="submit" disabled={!memoryDraft.trim() || saveMemory.isPending} aria-label="Save memory">{saveMemory.isPending ? <Loader2 size={13} className="spin" /> : <Plus size={13} />}</button>
+              </form>
+              {memoriesQuery.isLoading ? <div className="mc-memory-empty">Loading memory…</div> : memories.length === 0 ? <div className="mc-memory-empty">Nothing saved yet.</div> : <div className="mc-memory-list">{memories.slice(0, 5).map((memory) => <div key={memory.id} className="mc-memory-item"><span>{memory.content}</span><button type="button" onClick={() => deleteMemory.mutate({ clientId, memoryId: memory.id })} disabled={deleteMemory.isPending} aria-label="Delete memory"><Trash2 size={12} /></button></div>)}</div>}
             </div>
           </div>
           <div className="mc-contact-list">
@@ -635,6 +780,7 @@ export function ModelChatView({
                     </div>
                   );
                 })}
+                {streamContent && <div className="mc-bubble-row theirs"><div className="mc-bubble theirs typing"><div className="mc-bubble-model">qwen2.5:7b · streaming</div><ChatMessageContent content={streamContent} /></div></div>}
                 {busy && (
                   <div className="mc-bubble-row theirs">
                     <div className="mc-bubble theirs typing">

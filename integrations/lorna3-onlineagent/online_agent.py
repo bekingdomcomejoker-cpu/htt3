@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -46,6 +47,7 @@ DEFAULT_SYSTEM = (
     "You run on their Termux mesh with access to their home lab context. "
     "Be precise, security-conscious, and practical. "
     "Prefer split-tunnel / read-only steps before destructive network changes. "
+    "Persistent memory is available through the local MCP tools. When the user asks to remember or save a fact, you MUST call lorna_remember before replying. When the user asks what is remembered, call lorna_memory_context. When the user asks to forget a named fact, call lorna_forget. Use memory to resolve follow-up references such as turn it off, but still call the relevant device tool. "
     "If you propose shell commands, mark them clearly in fenced bash blocks "
     "and assume the operator must approve execution."
 )
@@ -82,6 +84,7 @@ class OnlineAgentAdapter:
             default="",
         )
         self.system = _env("ONLINE_AGENT_SYSTEM", default=DEFAULT_SYSTEM)
+        self.history: list[dict[str, str]] = []
 
     def health(self) -> dict:
         configured = bool(self.base_url and self.api_key)
@@ -127,6 +130,93 @@ class OnlineAgentAdapter:
             return None, "", exc
 
     def ask(self, prompt: str, *, timeout_s: int = 120) -> BrowserReply:
+        """Run Forge with the authenticated local MCP catalog, bounded to four rounds."""
+        started = time.time()
+        if not (prompt or "").strip():
+            return error_reply(self.node, self.name, EMPTY_PROMPT)
+        if not self.base_url or not self.api_key:
+            return BrowserReply(
+                self.node, self.name,
+                f"[{ONLINE_CONFIG}] Set ONLINE_AGENT_BASE_URL and ONLINE_AGENT_API_KEY (model={self.model}). Keys stay on Termux only.",
+                "", int((time.time() - started) * 1000), ONLINE_CONFIG,
+            )
+        original_prompt = prompt.strip()
+        normalized_prompt = original_prompt.casefold().replace("flashloght", "flashlight")
+        recent_user_text = " ".join(item["content"] for item in self.history[-6:] if item.get("role") == "user").casefold().replace("flashloght", "flashlight")
+        flashlight_follow_up = bool(re.search(r"\b(off|turn it off|switch it off)\b", normalized_prompt) and "flashlight" in recent_user_text and re.search(r"\b(on|turned on|turn it on)\b", recent_user_text))
+        flashlight_request = ("flashlight" in normalized_prompt or "torch" in normalized_prompt or flashlight_follow_up) and bool(re.search(r"\b(on|off|turn it on|turn it off|switch it on|switch it off)\b", normalized_prompt))
+        if flashlight_request:
+            state = "off" if re.search(r"\b(off|turn it off|switch it off)\b", normalized_prompt) else "on"
+            try:
+                from mcp_client import OmegaMCPClient
+                client = OmegaMCPClient()
+                client.initialize()
+                result = client.call("flashlight_control", {"state": state}, timeout=10)
+                self.history.extend([{"role": "user", "content": original_prompt}, {"role": "assistant", "content": result}])
+                return BrowserReply(self.node, self.name, result, "local-mcp://flashlight_control", int((time.time() - started) * 1000))
+            except Exception as exc:
+                return BrowserReply(self.node, self.name, f"Flashlight control failed: {exc}", "local-mcp://flashlight_control", int((time.time() - started) * 1000), ONLINE_REJECTED)
+        try:
+            from mcp_client import OmegaMCPClient
+            client = OmegaMCPClient()
+            client.initialize()
+            raw_tools = client.list_tools().get("result", {}).get("tools", [])
+            tools = [{"type": "function", "function": {
+                "name": item.get("name"),
+                "description": item.get("description", ""),
+                "parameters": item.get("inputSchema", {"type": "object", "properties": {}}),
+            }} for item in raw_tools if item.get("name")]
+        except Exception:
+            # Ordinary Forge chat remains available if the local bridge is down.
+            return self._ask_plain(prompt, timeout_s=timeout_s)
+        messages = [
+            {"role": "system", "content": self.system + " You have access to the authenticated local OMEGA MCP tools. Use them when needed; prefer read-only checks and never claim a tool result you did not receive."},
+            *self.history[-6:],
+            {"role": "user", "content": original_prompt},
+        ]
+        seen = set()
+        for _ in range(4):
+            payload = {"model": self.model, "messages": messages, "temperature": 0.3, "tools": tools, "tool_choice": "auto"}
+            status, raw, exc = self._request(payload, max(5, min(int(timeout_s), 600)))
+            if exc is not None or status is None or status >= 400:
+                return self._ask_plain(prompt, timeout_s=timeout_s)
+            try:
+                data = json.loads(raw)
+                message = (data.get("choices") or [])[0].get("message") or {}
+            except (ValueError, IndexError, AttributeError):
+                return self._ask_plain(prompt, timeout_s=timeout_s)
+            calls = message.get("tool_calls") or []
+            content = (message.get("content") or "").strip()
+            if not calls:
+                if content:
+                    self.history.extend([{"role": "user", "content": original_prompt}, {"role": "assistant", "content": content}])
+                    return BrowserReply(self.node, self.name, content, self._chat_url(), int((time.time() - started) * 1000))
+                return self._ask_plain(prompt, timeout_s=timeout_s)
+            messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": calls})
+            for call in calls:
+                fn = call.get("function") or {}
+                name = fn.get("name")
+                args = fn.get("arguments") or {}
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except ValueError:
+                        args = {}
+                signature = json.dumps([name, args], sort_keys=True, default=str)
+                if not name or signature in seen:
+                    return BrowserReply(self.node, self.name, "Agent repeated an MCP call; stopping safely.", self._chat_url(), int((time.time() - started) * 1000))
+                seen.add(signature)
+                try:
+                    result = client.call(name, args, timeout=min(int(timeout_s), 120))
+                except Exception as tool_exc:
+                    result = f"MCP tool error: {tool_exc}"
+                item = {"role": "tool", "content": str(result), "name": name}
+                if call.get("id"):
+                    item["tool_call_id"] = call["id"]
+                messages.append(item)
+        return BrowserReply(self.node, self.name, "Agent stopped after the maximum MCP tool rounds.", self._chat_url(), int((time.time() - started) * 1000))
+
+    def _ask_plain(self, prompt: str, *, timeout_s: int = 120) -> BrowserReply:
         started = time.time()
         if not (prompt or "").strip():
             return error_reply(self.node, self.name, EMPTY_PROMPT)

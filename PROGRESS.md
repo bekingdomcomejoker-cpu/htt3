@@ -148,3 +148,9 @@ Validation completed in both the GitHub working tree and active WebDev project: 
 Integrated the supplied `lorna3-onlineagent.zip` package. The package SHA-256 matched `5e1db5624c8ef7a598116038b5a253001d12a538c3c17171d60248976353d564`. The website Cloud CLI now includes a LORNA ONLINE AGENT panel that queues `@onlineagent <prompt>` messages to the Termux inbox and provides an explicit `lorna2 --node agent --quiet -p "/node agent"` probe action through the existing authenticated Termux tool. The adapter source and installation instructions are included under `integrations/lorna3-onlineagent/`.
 
 The Forge API key remains strictly Termux-side; the public website only relays prompts and never stores or receives the online-agent key. Added shared prompt formatting and regression tests for routing, empty-prompt rejection, and the Lorna probe command. Termux installation still requires the connected phone workspace and its local environment variables.
+
+## Shared OMEGA release synchronization — 2026-09-24 UTC
+
+Synchronized the verified application source from the current `htt4` release into this existing `htt3` repository while preserving its release documentation. The synchronized source includes the current Cloud/Local CLI model work, pipeline and online-agent integrations, persistent chat memory, the Sandbox Shell tab with command history and streamed output, and the latest server-side relay tests. The canonical hub URL repair remains in the existing `htt` repository.
+
+Validation passed after synchronization: `pnpm check`, `pnpm test` (**19 Vitest tests**), `pnpm build`, and `git diff --check`. A local rollback branch named `pre-sync-2026-09-24` was created before applying the source update.
